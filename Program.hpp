@@ -210,33 +210,33 @@ private:
 #else
             int status;
             HANDLE fd[2];
-            HANDLE fd_2[2];
-            pipe(fd_2);
+            HANDLE fd2[2];
+            pipe(fd2);
             pipe(fd);
-            pid_t child_pid1 = fork();
-            pid_t child_pid2 = 0;
+            pid_t childPid1 = fork();
+            pid_t childPid2 = 0;
 
-            if (child_pid1) {
+            if (childPid1) {
                 close(fd[0]);
-                write(fd[1], &child_pid1, sizeof(int));
+                write(fd[1], &childPid1, sizeof(int));
                 close(fd[1]);
-                child_pid2 = fork();
+                childPid2 = fork();
             } else {
                 close(fd[1]);
-                read(fd[0], &child_pid1, sizeof(int));
+                read(fd[0], &childPid1, sizeof(int));
                 close(fd[0]);
             }
-            if (child_pid2) {
-                close(fd_2[0]);
-                write(fd_2[1], &child_pid2, sizeof(int));
-                close(fd_2[1]);
-            } else if (getpid() != child_pid1) {
-                close(fd_2[1]);
-                read(fd_2[0], &child_pid2, sizeof(int));
-                close(fd_2[0]);
+            if (childPid2) {
+                close(fd2[0]);
+                write(fd2[1], &childPid2, sizeof(int));
+                close(fd2[1]);
+            } else if (getpid() != childPid1) {
+                close(fd2[1]);
+                read(fd2[0], &childPid2, sizeof(int));
+                close(fd2[0]);
             }
 
-            if (getpid() == child_pid1) {
+            if (getpid() == childPid1) {
                 this->WaitSema();
                 this->_log << "copy #1 pid: " << getpid() << " time start" << TimeUtils::TimeNow() << std::endl;
                 this->_sharedMemory->counter += 10;
@@ -244,7 +244,7 @@ private:
                 this->ReleaseSema();
                 return;
             }
-            if (getpid() == child_pid2) {
+            if (getpid() == childPid2) {
                 this->WaitSema();
                 this->_log << "copy #2 pid" << getpid() << " time start: " << TimeUtils::TimeNow() << std::endl;
                 this->_sharedMemory->counter *= 2;
@@ -259,7 +259,7 @@ private:
                 return;
             }
 
-            waitpid(child_pid1, &status, WUNTRACED);
+            waitpid(childPid1, &status, WUNTRACED);
 #endif
         }
     };
