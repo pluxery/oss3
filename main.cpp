@@ -1,6 +1,7 @@
 #include "Program.hpp"
 #include <locale>
 
+#ifdef _WIN32
 bool IsCopy1(char *type) {
     return strcmp(type, COPY_NAME_1) == 0;
 }
@@ -8,6 +9,7 @@ bool IsCopy1(char *type) {
 bool IsCopy2(char *type) {
     return strcmp(type, COPY_NAME_2) == 0;
 }
+#endif
 
 int main(int argc, char *argv[]) {
     setlocale(LC_ALL, "");

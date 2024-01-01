@@ -18,12 +18,15 @@
 #   define INVALID_MEMORY NULL
 #   define SEM_TYPE HANDLE
 #else
+
 #   include <unistd.h>
 #   include <fcntl.h>
 #   include <utility>
 #   include <filesystem>
 #   include <semaphore.h>
 #   include <sys/mman.h>
+#include <sys/wait.h>
+
 #   define MEMORY_NAME "/memory_name"
 #   define INVALID_MEMORY (-1)
 #   define SEM_TYPE sem_t *
@@ -53,7 +56,7 @@ public:
         this->executableName = filename;
         this->_path = path;
 #else
-        this->current_folder = std::filesystem::path(curr_fldr).parent_path();
+        this->_path = std::filesystem::path(dir).parent_path();
 #endif
         this->OpenSharedMemory();
         if (this->_mem == INVALID_MEMORY) {
@@ -119,7 +122,7 @@ public:
 #if defined(WIN32)
         CloseHandle(this->_sema);
 #else
-        sem_close(this->semaphore);
+        sem_close(this->_sema);
 #endif
         this->_log.close();
     };
@@ -206,61 +209,57 @@ private:
 
 #else
             int status;
-        HANDLE fd[2];
-        HANDLE fd_2[2];
-        pipe(fd_2);
-        pipe(fd);
-        pid_t child_pid1 = fork();
-        pid_t child_pid2 = 0;
+            HANDLE fd[2];
+            HANDLE fd_2[2];
+            pipe(fd_2);
+            pipe(fd);
+            pid_t child_pid1 = fork();
+            pid_t child_pid2 = 0;
 
-        if (child_pid1) {
-            close(fd[0]);
-            write(fd[1], &child_pid1, sizeof(int));
-            close(fd[1]);
-            child_pid2 = fork();
-        } else {
-            close(fd[1]);
-            read(fd[0], &child_pid1, sizeof(int));
-            close(fd[0]);
-        }
-        if (child_pid2) {
-            close(fd_2[0]);
-            write(fd_2[1], &child_pid2, sizeof(int));
-            close(fd_2[1]);
-        } else if (getpid() != child_pid1) {
-            close(fd_2[1]);
-            read(fd_2[0], &child_pid2, sizeof(int));
-            close(fd_2[0]);
-        }
+            if (child_pid1) {
+                close(fd[0]);
+                write(fd[1], &child_pid1, sizeof(int));
+                close(fd[1]);
+                child_pid2 = fork();
+            } else {
+                close(fd[1]);
+                read(fd[0], &child_pid1, sizeof(int));
+                close(fd[0]);
+            }
+            if (child_pid2) {
+                close(fd_2[0]);
+                write(fd_2[1], &child_pid2, sizeof(int));
+                close(fd_2[1]);
+            } else if (getpid() != child_pid1) {
+                close(fd_2[1]);
+                read(fd_2[0], &child_pid2, sizeof(int));
+                close(fd_2[0]);
+            }
 
-        if (getpid() == child_pid1) {
-            std::time_t end_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-            this->waitSemaphore();
-            this->log_file << "COPY 1 PID : " << getpid() << " TIME OF START: " << std::ctime(&end_time) << std::endl;
-            this->content->counter += 10;
-            end_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-            this->log_file << "TIME OF END 1 COPY : " << std::ctime(&end_time) << std::endl;
-            this->releaseSemaphore();
-            return;
-        }
-        if (getpid() == child_pid2) {
-            std::time_t end_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-            this->waitSemaphore();
-            this->log_file << "COPY 2 PID : " << getpid() << " TIME OF START: " << std::ctime(&end_time) << std::endl;
-            this->content->counter *= 10;
-            this->releaseSemaphore();
+            if (getpid() == child_pid1) {
+                this->WaitSema();
+                this->_log << "copy #1 pid: " << getpid() << " time start" << TimeUtils::TimeNow() << std::endl;
+                this->_sharedMemory->counter += 10;
+                this->_log << "end time: " << TimeUtils::TimeNow() << std::endl;
+                this->ReleaseSema();
+                return;
+            }
+            if (getpid() == child_pid2) {
+                this->WaitSema();
+                this->_log << "copy #2 pid" << getpid() << " time start: " << TimeUtils::TimeNow() << std::endl;
+                this->_sharedMemory->counter *= 2;
+                this->ReleaseSema();
 
-            sleep(2);
+                sleep(2);
 
-            this->waitSemaphore();
-            this->content->counter /=10;
-            end_time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-            this->log_file << "TIME OF END 2 COPY : " << std::ctime(&end_time) << std::endl;
-            this->releaseSemaphore();
-            return;
-        }
+                this->WaitSema();
+                this->_sharedMemory->counter /= 2;
+                this->_log << "end time: " << TimeUtils::TimeNow() << std::endl;
+                this->ReleaseSema();
+                return;
+            }
 
-        waitpid(child_pid1, &status, WUNTRACED);
+            waitpid(child_pid1, &status, WUNTRACED);
 #endif
         }
     };
@@ -284,9 +283,9 @@ private:
         this->_mem = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(SharedMemory),
                                        MEMORY_NAME);
 #else
-        this->sharedMemory = shm_open(MEMORY_NAME, O_CREAT | O_EXCL | O_RDWR, 0644);
-    ftruncate(this->sharedMemory, sizeof(SharedMemoryContent));
-    this->semaphore = sem_open(SEMAPHORE_NAME, O_CREAT | O_EXCL | O_RDWR, 0644);
+        this->_mem = shm_open(MEMORY_NAME, O_CREAT | O_EXCL | O_RDWR, 0644);
+        ftruncate(this->_mem, sizeof(SharedMemory));
+        this->_sema = sem_open(SEM_NAME, O_CREAT | O_EXCL | O_RDWR, 0644);
 #endif
     };
 
@@ -295,8 +294,8 @@ private:
         this->_sharedMemory = reinterpret_cast<SharedMemory *>(MapViewOfFile(this->_mem, FILE_MAP_WRITE, 0, 0,
                                                                              sizeof(SharedMemory)));
 #else
-        void *res = mmap(nullptr, sizeof(SharedMemoryContent), PROT_WRITE | PROT_READ, MAP_SHARED, this->memory_for_counter, 0);
-        this->content = reinterpret_cast<SharedMemoryContent*>(res);
+        void *res = mmap(nullptr, sizeof(SharedMemory), PROT_WRITE | PROT_READ, MAP_SHARED, this->_mem, 0);
+        this->_sharedMemory = reinterpret_cast<SharedMemory *>(res);
 #endif
         if (this->_isNewProcess) {
             this->_sharedMemory->counter = 0;
@@ -309,7 +308,7 @@ private:
 #if defined(WIN32)
         UnmapViewOfFile(this->_sharedMemory);
 #else
-        munmap(this->content, sizeof(SharedMemoryContent));
+        munmap(this->_sharedMemory, sizeof(SharedMemory));
 #endif
     };
 
@@ -319,7 +318,7 @@ private:
         this->_sema = OpenSemaphore(SEMAPHORE_ALL_ACCESS, false, SEM_NAME);
 #else
         this->_mem = shm_open(MEMORY_NAME, O_RDWR, 0644);
-        this->_sema = sem_open(SEMAPHORE_NAME, O_RDWR, 0644);
+        this->_sema = sem_open(SEM_NAME, O_RDWR, 0644);
 #endif
     };
 
@@ -336,7 +335,7 @@ private:
 #if defined(WIN32)
         CloseHandle(this->_mem);
 #else
-        close(this->memory_for_counter);
+        close(this->_mem);
 #endif
     };
 
@@ -344,7 +343,7 @@ private:
 #if defined(WIN32)
         WaitForSingleObject(this->_sema, 0);
 #else
-        sem_wait(this->semaphore);
+        sem_wait(this->_sema);
 #endif
     };
 
@@ -352,7 +351,7 @@ private:
 #if defined (WIN32)
         ReleaseSemaphore(this->_sema, 1, NULL);
 #else
-        sem_post(this->semaphore);
+        sem_post(this->_sema);
 #endif
     };
 };
